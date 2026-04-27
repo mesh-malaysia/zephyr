@@ -1073,12 +1073,16 @@ static int udc_stm32_enable(const struct device *dev)
 
 	udc_stm32_mem_init(dev);
 
-	status = HAL_PCD_Start(&priv->pcd);
-	if (status != HAL_OK) {
-		LOG_ERR("PCD_Start failed, %d", (int)status);
-		return -EIO;
-	}
-
+	/*
+	 * Open EP0 and arm the NVIC IRQ before releasing D+ (HAL_PCD_Start).
+	 * On boards where VBUS is absent (e.g. USB over K-type audio jack)
+	 * the host begins enumeration immediately after seeing D+ go high.
+	 * If the IRQ fires before EP0 is open or before the NVIC is armed,
+	 * HAL_PCD_ResetCallback() cannot re-open EP0 (ep_cfg->stat.enabled
+	 * would be false) and the device silently drops the first reset,
+	 * producing an intermittent "Unnamed Device" partial enumeration.
+	 * Configuring EP0 and enabling the IRQ first eliminates that window.
+	 */
 	ret = udc_ep_enable_internal(dev, USB_CONTROL_EP_OUT,
 				     USB_EP_TYPE_CONTROL,
 				     UDC_STM32_EP0_MAX_PACKET_SIZE, 0);
@@ -1096,6 +1100,12 @@ static int udc_stm32_enable(const struct device *dev)
 	}
 
 	irq_enable(cfg->irqn);
+
+	status = HAL_PCD_Start(&priv->pcd);
+	if (status != HAL_OK) {
+		LOG_ERR("PCD_Start failed, %d", (int)status);
+		return -EIO;
+	}
 
 	return 0;
 }
